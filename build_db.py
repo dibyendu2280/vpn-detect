@@ -14,11 +14,8 @@ Sources used (all free, no API key required):
 import ipaddress
 import sqlite3
 import urllib.request
-<<<<<<< HEAD
 import csv
 import io
-=======
->>>>>>> 13ad68784df96e885fbe356d666e72056e3534ed
 import os
 import sys
 import logging
@@ -33,13 +30,10 @@ log = logging.getLogger(__name__)
 
 DB_PATH = "vpn_detection.db"
 
-<<<<<<< HEAD
 BAD_ASN_URL = (
     "https://raw.githubusercontent.com/brianhama/bad-asn-list/master/bad-asn-list.csv"
 )
 
-=======
->>>>>>> 13ad68784df96e885fbe356d666e72056e3534ed
 SOURCES = [
     {
         "name":   "x4bnet_vpn",
@@ -153,7 +147,6 @@ def build_database():
             source   TEXT    NOT NULL    -- source identifier
         );
 
-<<<<<<< HEAD
         -- ASN-level blocklist from brianhama/bad-asn-list
         -- Used as Layer 2 fallback when an IP is not in ip_ranges
         CREATE TABLE asn_blocklist (
@@ -163,8 +156,6 @@ def build_database():
             country     TEXT
         );
 
-=======
->>>>>>> 13ad68784df96e885fbe356d666e72056e3534ed
         CREATE TABLE meta (
             key   TEXT PRIMARY KEY,
             value TEXT
@@ -200,7 +191,6 @@ def build_database():
         CREATE INDEX idx_end   ON ip_ranges (ip_end);
     """)
 
-<<<<<<< HEAD
     # ── ASN blocklist ──────────────────────────────────────────────────────────
     asn_count = 0
     log.info("Processing source: bad_asn_list …")
@@ -250,17 +240,12 @@ def build_database():
         log.error(f"    ✗ bad_asn_list failed: {exc}")
         failed.append("bad_asn_list")
 
-=======
->>>>>>> 13ad68784df96e885fbe356d666e72056e3534ed
     # Metadata row
     built_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     cur.executemany("INSERT OR REPLACE INTO meta VALUES (?, ?)", [
         ("built_at",      built_at),
         ("total_ranges",  str(grand_total)),
-<<<<<<< HEAD
         ("total_asns",    str(asn_count)),
-=======
->>>>>>> 13ad68784df96e885fbe356d666e72056e3534ed
         ("failed_sources", ",".join(failed) if failed else ""),
     ])
     conn.commit()
@@ -271,16 +256,10 @@ def build_database():
 
     size_kb = os.path.getsize(DB_PATH) / 1024
     log.info("─" * 50)
-<<<<<<< HEAD
     log.info(f"  Total IP ranges : {grand_total:,}")
     log.info(f"  Total ASNs      : {asn_count:,}")
     log.info(f"  File size       : {size_kb:,.1f} KB")
     log.info(f"  Built at        : {built_at}")
-=======
-    log.info(f"  Total ranges : {grand_total:,}")
-    log.info(f"  File size    : {size_kb:,.1f} KB")
-    log.info(f"  Built at     : {built_at}")
->>>>>>> 13ad68784df96e885fbe356d666e72056e3534ed
     if failed:
         log.warning(f"  Failed sources: {', '.join(failed)}")
     log.info(f"  Output       : {DB_PATH}")
@@ -296,8 +275,4 @@ def build_database():
 
 
 if __name__ == "__main__":
-<<<<<<< HEAD
     build_database()
-=======
-    build_database()
->>>>>>> 13ad68784df96e885fbe356d666e72056e3534ed
