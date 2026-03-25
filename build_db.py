@@ -48,10 +48,10 @@ SOURCES = [
         "format": "ip",
     },
     {
-        "name":   "firehol_datacenter",
-        "url":    "https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/datacenters.netset",
+        "name":   "ipcat_datacenter",
+        "url":    "https://raw.githubusercontent.com/client9/ipcat/master/datacenters.csv",
         "type":   "datacenter",
-        "format": "cidr",
+        "format": "ipcat_csv",   # ip_start,ip_end,name,url  (dot notation, not CIDR)
     },
     {
         "name":   "ipsum_proxy",
@@ -89,6 +89,24 @@ def ip_to_range(ip: str):
 
 def parse_lines(content: str, fmt: str):
     """Yield (ip_start, ip_end) integer pairs from raw text content."""
+
+    # client9/ipcat format: ip_start,ip_end,name,url  (dot notation, no CIDR)
+    if fmt == "ipcat_csv":
+        for raw_line in content.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(",")
+            if len(parts) < 2:
+                continue
+            try:
+                start = int(ipaddress.ip_address(parts[0].strip()))
+                end   = int(ipaddress.ip_address(parts[1].strip()))
+                if start <= end:
+                    yield start, end
+            except ValueError:
+                continue
+        return
     for raw_line in content.splitlines():
         line = raw_line.strip()
 
