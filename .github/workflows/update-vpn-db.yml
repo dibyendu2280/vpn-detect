@@ -95,7 +95,7 @@ jobs:
           |---|---|
           | [X4BNet VPN list](https://github.com/X4BNet/lists_vpn) | Commercial VPN ranges |
           | [Tor Project](https://check.torproject.org/torbulkexitlist) | Tor exit nodes |
-          | [Firehol datacenters](https://github.com/firehol/blocklist-ipsets) | Datacenter / hosting IPs |
+          | [ipcat_datacenter](https://raw.githubusercontent.com/client9/ipcat/master/datacenters.csv) | Datacenter / hosting IPs |
           | [Stamparm ipsum level 3](https://github.com/stamparm/ipsum) | Open proxies |
 
           ### Download
