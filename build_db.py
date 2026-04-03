@@ -5,10 +5,13 @@ Downloads free IP blocklists and builds a single SQLite database
 for offline VPN / proxy detection in WordPress plugins.
 
 Sources used (all free, no API key required):
-  - X4BNet       : Commercial VPN provider IP ranges
-  - Tor Project  : Official Tor exit node list
-  - Firehol      : Datacenter / hosting IP ranges
-  - Stamparm     : Known open proxies (level 3 = high confidence)
+  - X4BNet          : Commercial VPN provider IP ranges
+  - Tor Project     : Official Tor exit node list
+  - client9/ipcat   : Datacenter / hosting IP ranges (CSV)
+  - Stamparm        : Known open proxies (level 3 = high confidence)
+  - StopForumSpam   : Known forum/blog spammer IPs (30-day list, zipped)
+  - AbuseIPDB       : 100% confidence abuse score IPs, 30-day (borestad mirror, no key)
+  - brianhama       : Bad ASN list (ASN-level blocklist)
 """
 
 import ipaddress
@@ -16,6 +19,7 @@ import sqlite3
 import urllib.request
 import csv
 import io
+import zipfile
 import os
 import sys
 import logging
@@ -29,6 +33,13 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 DB_PATH = "vpn_detection.db"
+
+# Read the built-in GitHub Actions token from environment.
+# Automatically available in every workflow via ${{ secrets.GITHUB_TOKEN }}.
+# Raises rate limits for raw.githubusercontent.com significantly.
+# Falls back to empty string when running locally — unauthenticated still works,
+# just at the lower public rate limit.
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 
 BAD_ASN_URL = (
     "https://raw.githubusercontent.com/brianhama/bad-asn-list/master/bad-asn-list.csv"
@@ -58,6 +69,18 @@ SOURCES = [
         "url":    "https://raw.githubusercontent.com/stamparm/ipsum/master/levels/3.txt",
         "type":   "proxy",
         "format": "ip",
+    },
+    {
+        "name":   "stopforumspam",
+        "url":    "https://www.stopforumspam.com/downloads/listed_ip_30.zip",
+        "type":   "spam",
+        "format": "sfs_zip",   # ZIP containing a plain-text file of IPs, one per line
+    },
+    {
+        "name":   "abuseipdb",
+        "url":    "https://raw.githubusercontent.com/borestad/blocklist-abuseipdb/main/abuseipdb-s100-30d.ipv4",
+        "type":   "abuse",
+        "format": "ip",        # plain text, one IP per line — no API key required
     },
 ]
 
@@ -89,6 +112,10 @@ def ip_to_range(ip: str):
 
 def parse_lines(content: str, fmt: str):
     """Yield (ip_start, ip_end) integer pairs from raw text content."""
+
+    # sfs_zip: already extracted to plain text by download_zip() — treat as plain IPs
+    if fmt == "sfs_zip":
+        fmt = "ip"
 
     # client9/ipcat format: ip_start,ip_end,name,url  (dot notation, no CIDR)
     if fmt == "ipcat_csv":
@@ -132,13 +159,31 @@ def parse_lines(content: str, fmt: str):
 
 # ── Download ───────────────────────────────────────────────────────────────────
 
+def _make_headers(url: str) -> dict:
+    """Build request headers, adding GitHub auth for raw.githubusercontent.com URLs."""
+    headers = {"User-Agent": "vpn-detection-db-builder/1.0 (github.com)"}
+    if "githubusercontent.com" in url and GITHUB_TOKEN:
+        headers["Authorization"] = f"token {GITHUB_TOKEN}"
+    return headers
+
+
 def download(url: str) -> str:
-    req = urllib.request.Request(
-        url,
-        headers={"User-Agent": "vpn-detection-db-builder/1.0 (github.com)"},
-    )
+    req = urllib.request.Request(url, headers=_make_headers(url))
     with urllib.request.urlopen(req, timeout=30) as resp:
         return resp.read().decode("utf-8", errors="ignore")
+
+
+def download_zip(url: str) -> str:
+    """Download a .zip file and return the text content of the first file inside it."""
+    req = urllib.request.Request(url, headers=_make_headers(url))
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        raw_bytes = resp.read()
+
+    with zipfile.ZipFile(io.BytesIO(raw_bytes)) as zf:
+        # StopForumSpam zip contains exactly one text file — grab the first entry
+        first_name = zf.namelist()[0]
+        with zf.open(first_name) as f:
+            return f.read().decode("utf-8", errors="ignore")
 
 
 # ── Main build ─────────────────────────────────────────────────────────────────
@@ -161,7 +206,7 @@ def build_database():
             id       INTEGER PRIMARY KEY AUTOINCREMENT,
             ip_start INTEGER NOT NULL,
             ip_end   INTEGER NOT NULL,
-            type     TEXT    NOT NULL,   -- 'vpn' | 'tor' | 'datacenter' | 'proxy'
+            type     TEXT    NOT NULL,   -- 'vpn' | 'tor' | 'datacenter' | 'proxy' | 'spam' | 'abuse'
             source   TEXT    NOT NULL    -- source identifier
         );
 
@@ -186,7 +231,11 @@ def build_database():
     for source in SOURCES:
         log.info(f"  Processing source: {source['name']} …")
         try:
-            content = download(source["url"])
+            # StopForumSpam delivers a .zip — use the zip-aware downloader
+            if source["format"] == "sfs_zip":
+                content = download_zip(source["url"])
+            else:
+                content = download(source["url"])
             rows    = [
                 (ip_start, ip_end, source["type"], source["name"])
                 for ip_start, ip_end in parse_lines(content, source["format"])
