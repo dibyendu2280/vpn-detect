@@ -27,6 +27,11 @@ jobs:
       # ── 3. Build the database ────────────────────────────────────────────────
       - name: Build VPN detection database
         run: python build_db.py
+        env:
+          # Passed to build_db.py so it can authenticate raw.githubusercontent.com
+          # requests — avoids 429 rate limit errors on unauthenticated downloads.
+          # GITHUB_TOKEN is built-in to every workflow, no manual setup needed.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # ── 4. Verify the output ─────────────────────────────────────────────────
       - name: Verify database integrity
@@ -95,8 +100,11 @@ jobs:
           |---|---|
           | [X4BNet VPN list](https://github.com/X4BNet/lists_vpn) | Commercial VPN ranges |
           | [Tor Project](https://check.torproject.org/torbulkexitlist) | Tor exit nodes |
-          | [Firehol datacenters](https://github.com/firehol/blocklist-ipsets) | Datacenter / hosting IPs |
+          | [client9/ipcat](https://github.com/client9/ipcat) | Datacenter / hosting IPs |
           | [Stamparm ipsum level 3](https://github.com/stamparm/ipsum) | Open proxies |
+          | [StopForumSpam 30d](https://www.stopforumspam.com/downloads) | Known spammer IPs |
+          | [borestad/AbuseIPDB s100-30d](https://github.com/borestad/blocklist-abuseipdb) | 100% confidence abuse IPs |
+          | [brianhama bad-asn-list](https://github.com/brianhama/bad-asn-list) | Bad ASN blocklist |
 
           ### Download
           ```
