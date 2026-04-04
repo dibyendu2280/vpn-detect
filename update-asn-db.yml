@@ -2,11 +2,11 @@ name: Update GeoLite2-ASN Database
 
 on:
   schedule:
-    - cron: '0 3 * * 2'    # Every Tuesday at 03:00 UTC (MaxMind updates Tuesdays)
-  workflow_dispatch:         # Allow manual trigger from GitHub UI
+    - cron: '0 3 * * 2'  # Every Tuesday at 03:00 UTC (MaxMind updates Tuesdays)
+  workflow_dispatch:  # Allow manual trigger from GitHub UI
 
 permissions:
-  contents: write            # Required to create/update GitHub Releases
+  contents: write  # Required to create/update GitHub Releases
 
 jobs:
   download-and-release:
@@ -40,43 +40,49 @@ jobs:
             echo "ERROR: GeoLite2-ASN.mmdb not found after extraction"
             exit 1
           fi
-
           SIZE=$(stat -c%s "GeoLite2-ASN.mmdb")
           echo "File size: ${SIZE} bytes"
-
           # Must be at least 5 MB — a valid ASN DB is ~8 MB
           if [ "$SIZE" -lt 5000000 ]; then
             echo "ERROR: File too small — download may have failed"
             exit 1
           fi
-
           # Valid MaxMind .mmdb starts with specific magic bytes
           MAGIC=$(xxd -l 3 -p GeoLite2-ASN.mmdb)
           echo "Magic bytes: ${MAGIC}"
           echo "Verification passed ✓"
 
-      # ── 5. Publish as a rolling 'latest' release ─────────────────────────────
+      # ── 5. Publish as a rolling 'asn-latest' release ─────────────────────────
       #
-      #  This reuses the SAME 'latest' release tag as the VPN DB workflow.
-      #  Both workflows upload to the same release — the two asset files
-      #  coexist peacefully under the one 'latest' tag.
+      #  Strategy: delete + recreate the 'asn-latest' tag/release on every run.
+      #  Using a dedicated tag prevents the VPN workflow from wiping this asset
+      #  when it recreates its own release daily.
       #
       #  Stable download URL (never changes):
-      #    https://github.com/YOUR_USERNAME/YOUR_REPO/releases/latest/download/GeoLite2-ASN.mmdb
+      #    https://github.com/YOUR_USERNAME/YOUR_REPO/releases/download/asn-latest/GeoLite2-ASN.mmdb
       #
-      - name: Upload GeoLite2-ASN.mmdb to latest release
+      - name: Delete existing 'asn-latest' release (if any)
+        run: gh release delete asn-latest --yes --cleanup-tag || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create new 'asn-latest' release
         run: |
-          # Delete the existing asset (if any) so we can re-upload cleanly
-          ASSET_ID=$(gh release view latest \
-            --json assets \
-            --jq '.assets[] | select(.name=="GeoLite2-ASN.mmdb") | .id' 2>/dev/null || true)
-
-          if [ -n "$ASSET_ID" ]; then
-            echo "Deleting old asset ID: ${ASSET_ID}"
-            gh release delete-asset latest GeoLite2-ASN.mmdb --yes || true
-          fi
-
-          gh release upload latest GeoLite2-ASN.mmdb --clobber
-          echo "GeoLite2-ASN.mmdb uploaded to latest release ✓"
+          DATE=$(date -u '+%Y-%m-%d')
+          gh release create asn-latest GeoLite2-ASN.mmdb \
+            --title "GeoLite2-ASN Database — ${DATE}" \
+            --notes "$(cat <<'NOTES'
+          ## Auto-updated every Tuesday at 03:00 UTC
+          ### Source
+          | Source | Type |
+          |---|---|
+          | [MaxMind GeoLite2](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data) | ASN / Autonomous System data |
+          ### Download
+          ```
+          https://github.com/YOUR_USERNAME/YOUR_REPO/releases/download/asn-latest/GeoLite2-ASN.mmdb
+          ```
+          NOTES
+          )" \
+            --latest=false
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
