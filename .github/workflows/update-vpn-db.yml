@@ -77,15 +77,15 @@ jobs:
       #  This keeps a single stable download URL:
       #    https://github.com/YOUR_USERNAME/YOUR_REPO/releases/latest/download/vpn_detection.db
       #
-      - name: Delete existing 'latest' release (if any)
-        run: gh release delete latest --yes --cleanup-tag || true
+      - name: Delete existing 'vpn-latest' release (if any)
+        run: gh release delete vpn-latest --yes --cleanup-tag || true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create new 'latest' release
+      - name: Create new 'vpn-latest' release
         run: |
           DATE=$(date -u '+%Y-%m-%d')
-          gh release create latest vpn_detection.db \
+          gh release create vpn-latest vpn_detection.db \
             --title "VPN Detection Database — ${DATE}" \
             --notes "$(cat <<'NOTES'
           ## Auto-updated daily at 02:00 UTC
@@ -100,7 +100,7 @@ jobs:
 
           ### Download
           ```
-          https://github.com/YOUR_USERNAME/YOUR_REPO/releases/latest/download/vpn_detection.db
+          https://github.com/YOUR_USERNAME/YOUR_REPO/releases/download/vpn-latest/vpn_detection.db
           ```
           NOTES
           )" \
