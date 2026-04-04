@@ -27,33 +27,23 @@ jobs:
       # ── 3. Build the database ────────────────────────────────────────────────
       - name: Build VPN detection database
         run: python build_db.py
-        env:
-          # Passed to build_db.py so it can authenticate raw.githubusercontent.com
-          # requests — avoids 429 rate limit errors on unauthenticated downloads.
-          # GITHUB_TOKEN is built-in to every workflow, no manual setup needed.
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # ── 4. Verify the output ─────────────────────────────────────────────────
       - name: Verify database integrity
         run: |
           python3 - <<'EOF'
           import sqlite3, sys, os
-
           path = "vpn_detection.db"
-
           # File must exist and be non-empty
           if not os.path.exists(path):
               print("ERROR: database file not found")
               sys.exit(1)
-
           conn = sqlite3.connect(path)
-
           # Quick integrity check
           result = conn.execute("PRAGMA integrity_check").fetchone()[0]
           if result != "ok":
               print(f"ERROR: integrity_check failed — {result}")
               sys.exit(1)
-
           # Row counts
           total = conn.execute("SELECT COUNT(*) FROM ip_ranges").fetchone()[0]
           by_type = conn.execute(
@@ -62,56 +52,51 @@ jobs:
           built_at = conn.execute(
               "SELECT value FROM meta WHERE key='built_at'"
           ).fetchone()[0]
-
           print(f"Built at      : {built_at}")
           print(f"Total ranges  : {total:,}")
           for t, c in by_type:
               print(f"  {t:<12}: {c:,}")
-
           if total < 1000:
               print("ERROR: too few ranges — aborting release")
               sys.exit(1)
-
           conn.close()
           print("Verification passed ✓")
           EOF
 
-      # ── 5. Publish as a rolling 'latest' release ─────────────────────────────
+      # ── 5. Publish as a rolling 'vpn-latest' release ─────────────────────────
       #
-      #  Strategy: delete + recreate the 'latest' tag/release on every run.
-      #  This keeps a single stable download URL:
-      #    https://github.com/YOUR_USERNAME/YOUR_REPO/releases/latest/download/vpn_detection.db
+      #  Strategy: delete + recreate the 'vpn-latest' tag/release on every run.
+      #  Using a dedicated tag prevents this workflow from wiping the
+      #  GeoLite2-ASN.mmdb asset managed by the ASN workflow.
       #
-      - name: Delete existing 'latest' release (if any)
-        run: gh release delete latest --yes --cleanup-tag || true
+      #  Stable download URL (never changes):
+      #    https://github.com/YOUR_USERNAME/YOUR_REPO/releases/download/vpn-latest/vpn_detection.db
+      #
+      - name: Delete existing 'vpn-latest' release (if any)
+        run: gh release delete vpn-latest --yes --cleanup-tag || true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create new 'latest' release
+      - name: Create new 'vpn-latest' release
         run: |
           DATE=$(date -u '+%Y-%m-%d')
-          gh release create latest vpn_detection.db \
+          gh release create vpn-latest vpn_detection.db \
             --title "VPN Detection Database — ${DATE}" \
             --notes "$(cat <<'NOTES'
           ## Auto-updated daily at 02:00 UTC
-
           ### Included sources
           | Source | Type |
           |---|---|
           | [X4BNet VPN list](https://github.com/X4BNet/lists_vpn) | Commercial VPN ranges |
           | [Tor Project](https://check.torproject.org/torbulkexitlist) | Tor exit nodes |
-          | [client9/ipcat](https://github.com/client9/ipcat) | Datacenter / hosting IPs |
+          | [ipcat_datacenter](https://raw.githubusercontent.com/client9/ipcat/master/datacenters.csv) | Datacenter / hosting IPs |
           | [Stamparm ipsum level 3](https://github.com/stamparm/ipsum) | Open proxies |
-          | [StopForumSpam 30d](https://www.stopforumspam.com/downloads) | Known spammer IPs |
-          | [borestad/AbuseIPDB s100-30d](https://github.com/borestad/blocklist-abuseipdb) | 100% confidence abuse IPs |
-          | [brianhama bad-asn-list](https://github.com/brianhama/bad-asn-list) | Bad ASN blocklist |
-
           ### Download
           ```
-          https://github.com/YOUR_USERNAME/YOUR_REPO/releases/latest/download/vpn_detection.db
+          https://github.com/YOUR_USERNAME/YOUR_REPO/releases/download/vpn-latest/vpn_detection.db
           ```
           NOTES
           )" \
-            --latest
+            --latest=false
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
