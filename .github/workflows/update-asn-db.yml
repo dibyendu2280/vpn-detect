@@ -62,21 +62,19 @@ jobs:
       #  coexist peacefully under the one 'latest' tag.
       #
       #  Stable download URL (never changes):
-      #    https://github.com/YOUR_USERNAME/YOUR_REPO/releases/latest/download/GeoLite2-ASN.mmdb
+      #   https://github.com/YOUR_USERNAME/YOUR_REPO/releases/download/asn-latest/GeoLite2-ASN.mmdb
       #
-      - name: Upload GeoLite2-ASN.mmdb to latest release
+      - name: Delete existing 'asn-latest' release (if any)
+        run: gh release delete asn-latest --yes --cleanup-tag || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Create new 'asn-latest' release
         run: |
-          # Delete the existing asset (if any) so we can re-upload cleanly
-          ASSET_ID=$(gh release view latest \
-            --json assets \
-            --jq '.assets[] | select(.name=="GeoLite2-ASN.mmdb") | .id' 2>/dev/null || true)
-
-          if [ -n "$ASSET_ID" ]; then
-            echo "Deleting old asset ID: ${ASSET_ID}"
-            gh release delete-asset latest GeoLite2-ASN.mmdb --yes || true
-          fi
-
-          gh release upload latest GeoLite2-ASN.mmdb --clobber
-          echo "GeoLite2-ASN.mmdb uploaded to latest release ✓"
+          DATE=$(date -u '+%Y-%m-%d')
+          gh release create asn-latest GeoLite2-ASN.mmdb \
+            --title "GeoLite2-ASN Database — ${DATE}" \
+            --notes "Auto-updated every Tuesday at 03:00 UTC from MaxMind." \
+            --latest=false
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
