@@ -282,13 +282,13 @@ def build_database():
             
             # Check if common header keywords exist
             has_header = any(k in first_line.lower() for k in ["asn", "organization", "country", "org", "name"])
+            source_count = 0
 
             if has_header:
                 reader = csv.DictReader(f_io)
                 for row in reader:
                     asn = (row.get("ASN") or row.get("asn") or row.get("autonomous_system") or row.get("AS") or "").strip()
                     if not asn:
-                        # Fallback: take the first column value if keys don't match
                         vals = list(row.values())
                         asn = vals[0] if vals else ""
                     
@@ -302,8 +302,8 @@ def build_database():
                     country = (row.get("Country Code") or row.get("Country") or row.get("country") or "").strip()
                     
                     all_asn_rows.append((asn.upper(), org, "bad", country))
+                    source_count += 1
             else:
-                # Headerless CSV fallback (e.g., raw ASN or CSV columns by index)
                 reader = csv.reader(f_io)
                 for row in reader:
                     if not row:
@@ -318,8 +318,9 @@ def build_database():
                     country = row[2].strip() if len(row) > 2 else ""
                     
                     all_asn_rows.append((asn.upper(), org, "bad", country))
+                    source_count += 1
 
-            log.info(f"    → ASNs parsed successfully from {asn_source['name']}")
+            log.info(f"    → {source_count:>7,} ASNs parsed from {asn_source['name']}")
         except Exception as exc:
             log.error(f"    ✗ {asn_source['name']} failed: {exc}")
             failed.append(asn_source["name"])
