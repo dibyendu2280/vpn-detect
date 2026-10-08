@@ -266,50 +266,60 @@ def build_database():
         CREATE INDEX idx_end   ON ip_ranges (ip_end);
     """)
 
-    # ── ASN blocklists ──────────────────────────────────────────────────────────
+# ── ASN blocklists ──────────────────────────────────────────────────────────
     asn_count = 0
     all_asn_rows = []
 
     for asn_source in ASN_SOURCES:
         log.info(f"Processing source: {asn_source['name']} …")
         try:
-            content  = download(asn_source["url"])
-            reader   = csv.DictReader(io.StringIO(content))
-            source_count = 0
+            content = download(asn_source["url"])
+            f_io = io.StringIO(content.strip())
+            
+            # Peek at the first line to see if it looks like a header
+            first_line = f_io.readline()
+            f_io.seek(0)
+            
+            # Check if common header keywords exist
+            has_header = any(k in first_line.lower() for k in ["asn", "organization", "country", "org", "name"])
 
-            for row in reader:
-                # Flexible key lookup for different CSV headers (e.g. ASN/asn, AS Name/Organization, etc.)
-                asn = (row.get("ASN") or row.get("asn") or row.get("autonomous_system") or "").strip()
-                if not asn:
-                    continue
+            if has_header:
+                reader = csv.DictReader(f_io)
+                for row in reader:
+                    asn = (row.get("ASN") or row.get("asn") or row.get("autonomous_system") or row.get("AS") or "").strip()
+                    if not asn:
+                        # Fallback: take the first column value if keys don't match
+                        vals = list(row.values())
+                        asn = vals[0] if vals else ""
+                    
+                    if not asn or not asn.replace("AS", "").isdigit():
+                        continue
 
-                # Normalise: ensure it starts with 'AS'
-                if not asn.upper().startswith("AS"):
-                    asn = "AS" + asn
+                    if not asn.upper().startswith("AS"):
+                        asn = "AS" + asn
 
-                org = (row.get("AS Name") or row.get("Organization") or row.get("org") or row.get("name") or "").strip()
-                country = (row.get("Country Code") or row.get("Country") or row.get("country") or "").strip()
+                    org = (row.get("AS Name") or row.get("Organization") or row.get("org") or row.get("name") or "").strip()
+                    country = (row.get("Country Code") or row.get("Country") or row.get("country") or "").strip()
+                    
+                    all_asn_rows.append((asn.upper(), org, "bad", country))
+            else:
+                # Headerless CSV fallback (e.g., raw ASN or CSV columns by index)
+                reader = csv.reader(f_io)
+                for row in reader:
+                    if not row:
+                        continue
+                    asn = row[0].strip()
+                    if not asn:
+                        continue
+                    if not asn.upper().startswith("AS"):
+                        asn = "AS" + asn
+                    
+                    org = row[1].strip() if len(row) > 1 else ""
+                    country = row[2].strip() if len(row) > 2 else ""
+                    
+                    all_asn_rows.append((asn.upper(), org, "bad", country))
 
-                # Infer type from org name keywords
-                org_lower = org.lower()
-                if any(k in org_lower for k in ["vpn", "nordvpn", "expressvpn", "surfshark",
-                                                "pia", "private internet", "mullvad", "protonvpn",
-                                                "airvpn", "hidemyass", "purevpn", "ipvanish"]):
-                    asn_type = "vpn"
-                elif any(k in org_lower for k in ["cloud", "hosting", "server", "datacenter",
-                                                  "data center", "vultr", "digitalocean", "linode",
-                                                  "hetzner", "ovh", "aws", "amazon", "azure",
-                                                  "google", "cloudflare"]):
-                    asn_type = "datacenter"
-                elif any(k in org_lower for k in ["proxy", "anonymize", "anonymous"]):
-                    asn_type = "proxy"
-                else:
-                    asn_type = "bad"
-
-                all_asn_rows.append((asn.upper(), org, asn_type, country))
-                source_count += 1
-
-            log.info(f"    → {source_count:>7,} ASNs parsed from {asn_source['name']}")
+            log.info(f"    → ASNs parsed successfully from {asn_source['name']}")
         except Exception as exc:
             log.error(f"    ✗ {asn_source['name']} failed: {exc}")
             failed.append(asn_source["name"])
