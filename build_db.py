@@ -12,6 +12,7 @@ Sources used (all free, no API key required):
   - StopForumSpam   : Known forum/blog spammer IPs (30-day list, zipped)
   - AbuseIPDB       : 100% confidence abuse score IPs, 30-day (borestad mirror, no key)
   - brianhama       : Bad ASN list (ASN-level blocklist)
+  - FFraud-com      : High-abuse networks ASN list
 """
 
 import ipaddress
@@ -41,9 +42,17 @@ DB_PATH = "vpn_detection.db"
 # just at the lower public rate limit.
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 
-BAD_ASN_URL = (
-    "https://raw.githubusercontent.com/brianhama/bad-asn-list/master/bad-asn-list.csv"
-)
+# Multiple ASN blocklist sources
+ASN_SOURCES = [
+    {
+        "name": "bad_asn_list",
+        "url": "https://raw.githubusercontent.com/brianhama/bad-asn-list/master/bad-asn-list.csv",
+    },
+    {
+        "name": "ffraud_high_abuse_asn",
+        "url": "https://raw.githubusercontent.com/FFraud-com/ip-fraud-database/refs/heads/main/asn-reputation/high-abuse-networks.csv",
+    },
+]
 
 SOURCES = [
     {
@@ -149,7 +158,7 @@ def parse_lines(content: str, fmt: str):
         if "/" in line:
             result = cidr_to_range(line)
         elif fmt == "cidr":
-            result = ip_to_range(line)     # CIDR list with a bare IP (treat as /32)
+            result = ip_to_range(line)   # CIDR list with a bare IP (treat as /32)
         else:
             result = ip_to_range(line)
 
@@ -203,20 +212,19 @@ def build_database():
         PRAGMA page_size    = 4096;
 
         CREATE TABLE ip_ranges (
-            id       INTEGER PRIMARY KEY AUTOINCREMENT,
-            ip_start INTEGER NOT NULL,
-            ip_end   INTEGER NOT NULL,
-            type     TEXT    NOT NULL,   -- 'vpn' | 'tor' | 'datacenter' | 'proxy' | 'spam' | 'abuse'
-            source   TEXT    NOT NULL    -- source identifier
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            ip_start   INTEGER NOT NULL,
+            ip_end     INTEGER NOT NULL,
+            type       TEXT    NOT NULL,   -- 'vpn' | 'tor' | 'datacenter' | 'proxy' | 'spam' | 'abuse'
+            source     TEXT    NOT NULL    -- source identifier
         );
 
-        -- ASN-level blocklist from brianhama/bad-asn-list
-        -- Used as Layer 2 fallback when an IP is not in ip_ranges
+        -- ASN-level blocklists
         CREATE TABLE asn_blocklist (
-            asn         TEXT PRIMARY KEY,  -- e.g. 'AS9009'
-            org         TEXT,              -- e.g. 'M247 Ltd'
-            type        TEXT,              -- 'vpn' | 'datacenter' | 'proxy' | 'bad'
-            country     TEXT
+            asn       TEXT PRIMARY KEY,   -- e.g. 'AS9009'
+            org       TEXT,               -- e.g. 'M247 Ltd'
+            type      TEXT,               -- 'vpn' | 'datacenter' | 'proxy' | 'bad'
+            country   TEXT
         );
 
         CREATE TABLE meta (
@@ -258,61 +266,73 @@ def build_database():
         CREATE INDEX idx_end   ON ip_ranges (ip_end);
     """)
 
-    # ── ASN blocklist ──────────────────────────────────────────────────────────
+    # ── ASN blocklists ──────────────────────────────────────────────────────────
     asn_count = 0
-    log.info("Processing source: bad_asn_list …")
-    try:
-        content  = download(BAD_ASN_URL)
-        reader   = csv.DictReader(io.StringIO(content))
-        asn_rows = []
+    all_asn_rows = []
 
-        for row in reader:
-            asn = row.get("ASN", "").strip()
-            if not asn:
-                continue
+    for asn_source in ASN_SOURCES:
+        log.info(f"Processing source: {asn_source['name']} …")
+        try:
+            content  = download(asn_source["url"])
+            reader   = csv.DictReader(io.StringIO(content))
+            source_count = 0
 
-            # Normalise: ensure it starts with 'AS'
-            if not asn.upper().startswith("AS"):
-                asn = "AS" + asn
+            for row in reader:
+                # Flexible key lookup for different CSV headers (e.g. ASN/asn, AS Name/Organization, etc.)
+                asn = (row.get("ASN") or row.get("asn") or row.get("autonomous_system") or "").strip()
+                if not asn:
+                    continue
 
-            org     = row.get("AS Name", row.get("Organization", "")).strip()
-            country = row.get("Country Code", row.get("Country", "")).strip()
+                # Normalise: ensure it starts with 'AS'
+                if not asn.upper().startswith("AS"):
+                    asn = "AS" + asn
 
-            # Infer type from org name keywords
-            org_lower = org.lower()
-            if any(k in org_lower for k in ["vpn", "nordvpn", "expressvpn", "surfshark",
-                                             "pia", "private internet", "mullvad", "protonvpn",
-                                             "airvpn", "hidemyass", "purevpn", "ipvanish"]):
-                asn_type = "vpn"
-            elif any(k in org_lower for k in ["cloud", "hosting", "server", "datacenter",
-                                               "data center", "vultr", "digitalocean", "linode",
-                                               "hetzner", "ovh", "aws", "amazon", "azure",
-                                               "google", "cloudflare"]):
-                asn_type = "datacenter"
-            elif any(k in org_lower for k in ["proxy", "anonymize", "anonymous"]):
-                asn_type = "proxy"
-            else:
-                asn_type = "bad"
+                org = (row.get("AS Name") or row.get("Organization") or row.get("org") or row.get("name") or "").strip()
+                country = (row.get("Country Code") or row.get("Country") or row.get("country") or "").strip()
 
-            asn_rows.append((asn.upper(), org, asn_type, country))
+                # Infer type from org name keywords
+                org_lower = org.lower()
+                if any(k in org_lower for k in ["vpn", "nordvpn", "expressvpn", "surfshark",
+                                                "pia", "private internet", "mullvad", "protonvpn",
+                                                "airvpn", "hidemyass", "purevpn", "ipvanish"]):
+                    asn_type = "vpn"
+                elif any(k in org_lower for k in ["cloud", "hosting", "server", "datacenter",
+                                                  "data center", "vultr", "digitalocean", "linode",
+                                                  "hetzner", "ovh", "aws", "amazon", "azure",
+                                                  "google", "cloudflare"]):
+                    asn_type = "datacenter"
+                elif any(k in org_lower for k in ["proxy", "anonymize", "anonymous"]):
+                    asn_type = "proxy"
+                else:
+                    asn_type = "bad"
 
+                all_asn_rows.append((asn.upper(), org, asn_type, country))
+                source_count += 1
+
+            log.info(f"    → {source_count:>7,} ASNs parsed from {asn_source['name']}")
+        except Exception as exc:
+            log.error(f"    ✗ {asn_source['name']} failed: {exc}")
+            failed.append(asn_source["name"])
+
+    if all_asn_rows:
+        # INSERT OR REPLACE handles any overlapping ASNs between blocklists cleanly
         cur.executemany(
-            "INSERT OR IGNORE INTO asn_blocklist (asn, org, type, country) VALUES (?, ?, ?, ?)",
-            asn_rows,
+            "INSERT OR REPLACE INTO asn_blocklist (asn, org, type, country) VALUES (?, ?, ?, ?)",
+            all_asn_rows,
         )
         conn.commit()
-        asn_count = len(asn_rows)
-        log.info(f"    → {asn_count:>7,} ASNs inserted")
-    except Exception as exc:
-        log.error(f"    ✗ bad_asn_list failed: {exc}")
-        failed.append("bad_asn_list")
+        
+        # Get count of unique stored ASNs
+        cur.execute("SELECT COUNT(*) FROM asn_blocklist")
+        asn_count = cur.fetchone()[0]
+        log.info(f"    → {asn_count:>7,} total unique ASNs inserted")
 
     # Metadata row
     built_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     cur.executemany("INSERT OR REPLACE INTO meta VALUES (?, ?)", [
-        ("built_at",      built_at),
-        ("total_ranges",  str(grand_total)),
-        ("total_asns",    str(asn_count)),
+        ("built_at",        built_at),
+        ("total_ranges",    str(grand_total)),
+        ("total_asns",      str(asn_count)),
         ("failed_sources", ",".join(failed) if failed else ""),
     ])
     conn.commit()
@@ -332,7 +352,7 @@ def build_database():
     log.info(f"  Output       : {DB_PATH}")
 
     # Exit with error if ALL sources failed
-    if len(failed) == len(SOURCES):
+    if len(failed) == len(SOURCES) + len(ASN_SOURCES):
         log.error("All sources failed — aborting.")
         sys.exit(1)
 
