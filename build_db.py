@@ -13,6 +13,7 @@ Sources used (all free, no API key required):
   - AbuseIPDB       : 100% confidence abuse score IPs, 30-day (borestad mirror, no key)
   - brianhama       : Bad ASN list (ASN-level blocklist)
   - FFraud-com      : High-abuse networks ASN list
+  - FFraud-com      : Confirmed abusive IP addresses
 """
 
 import ipaddress
@@ -91,6 +92,12 @@ SOURCES = [
         "type":   "abuse",
         "format": "ip",        # plain text, one IP per line — no API key required
     },
+    {
+        "name":   "frraud abuse",
+        "url":    "https://raw.githubusercontent.com/FFraud-com/ip-fraud-database/refs/heads/main/threat-ips/confirmed-abusive.csv",
+        "type":   "spam",      # default fallback if blank/missing type in CSV
+        "format": "ffraud_csv", # custom CSV with IP & dynamic type columns
+    },
 ]
 
 
@@ -119,8 +126,8 @@ def ip_to_range(ip: str):
         return None
 
 
-def parse_lines(content: str, fmt: str):
-    """Yield (ip_start, ip_end) integer pairs from raw text content."""
+def parse_lines(content: str, fmt: str, default_type: str = "spam"):
+    """Yield (ip_start, ip_end, row_type) tuples from raw text content."""
 
     # sfs_zip: already extracted to plain text by download_zip() — treat as plain IPs
     if fmt == "sfs_zip":
@@ -139,10 +146,40 @@ def parse_lines(content: str, fmt: str):
                 start = int(ipaddress.ip_address(parts[0].strip()))
                 end   = int(ipaddress.ip_address(parts[1].strip()))
                 if start <= end:
-                    yield start, end
+                    yield start, end, default_type
             except ValueError:
                 continue
         return
+
+    # FFraud confirmed abusive CSV format: ip, type, etc.
+    if fmt == "ffraud_csv":
+        f_io = io.StringIO(content.strip())
+        reader = csv.DictReader(f_io)
+        for row in reader:
+            ip_str = (row.get("ip") or row.get("IP") or row.get("address") or "").strip()
+            if not ip_str:
+                # Fallback if first column doesn't match keys
+                vals = list(row.values())
+                ip_str = vals[0].strip() if vals else ""
+
+            if not ip_str:
+                continue
+
+            # Check specified type or fallback to default_type ('spam')
+            row_type = (row.get("type") or row.get("category") or "").strip().lower()
+            if not row_type or row_type not in ["proxy", "vpn", "tor", "datacenter", "mobile"]:
+                row_type = default_type
+
+            # Parse as single IP or CIDR range
+            if "/" in ip_str:
+                res = cidr_to_range(ip_str)
+            else:
+                res = ip_to_range(ip_str)
+
+            if res:
+                yield res[0], res[1], row_type
+        return
+
     for raw_line in content.splitlines():
         line = raw_line.strip()
 
@@ -163,7 +200,7 @@ def parse_lines(content: str, fmt: str):
             result = ip_to_range(line)
 
         if result:
-            yield result
+            yield result[0], result[1], default_type
 
 
 # ── Download ───────────────────────────────────────────────────────────────────
@@ -215,7 +252,7 @@ def build_database():
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
             ip_start   INTEGER NOT NULL,
             ip_end     INTEGER NOT NULL,
-            type       TEXT    NOT NULL,   -- 'vpn' | 'tor' | 'datacenter' | 'proxy' | 'spam' | 'abuse'
+            type       TEXT    NOT NULL,   -- 'vpn' | 'tor' | 'datacenter' | 'proxy' | 'spam' | 'abuse' | 'mobile'
             source     TEXT    NOT NULL    -- source identifier
         );
 
@@ -244,9 +281,10 @@ def build_database():
                 content = download_zip(source["url"])
             else:
                 content = download(source["url"])
-            rows    = [
-                (ip_start, ip_end, source["type"], source["name"])
-                for ip_start, ip_end in parse_lines(content, source["format"])
+
+            rows = [
+                (ip_start, ip_end, row_type, source["name"])
+                for ip_start, ip_end, row_type in parse_lines(content, source["format"], source["type"])
             ]
             cur.executemany(
                 "INSERT INTO ip_ranges (ip_start, ip_end, type, source) VALUES (?, ?, ?, ?)",
@@ -266,7 +304,7 @@ def build_database():
         CREATE INDEX idx_end   ON ip_ranges (ip_end);
     """)
 
-# ── ASN blocklists ──────────────────────────────────────────────────────────
+    # ── ASN blocklists ──────────────────────────────────────────────────────────
     asn_count = 0
     all_asn_rows = []
 
