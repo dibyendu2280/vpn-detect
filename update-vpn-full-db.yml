@@ -1,4 +1,4 @@
-name: Update VPN Detection Database
+name: Update VPN Detection Full Database
 
 on:
   schedule:
