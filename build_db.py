@@ -88,12 +88,7 @@ SOURCES = [
         "type":   "abuse",
         "format": "ip",        # plain text, one IP per line — no API key required
     },
-    {
-        "name":   "frraud abuse",
-        "url":    "https://raw.githubusercontent.com/FFraud-com/ip-fraud-database/refs/heads/main/threat-ips/confirmed-abusive.csv",
-        "type":   "spam",      # default fallback if blank/missing type in CSV
-        "format": "ffraud_csv", # custom CSV with IP & dynamic type columns
-    },
+    
 ]
 
 
