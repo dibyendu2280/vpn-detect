@@ -37,10 +37,6 @@ log = logging.getLogger(__name__)
 DB_PATH = "vpn_detection.db"
 
 # Read the built-in GitHub Actions token from environment.
-# Automatically available in every workflow via ${{ secrets.GITHUB_TOKEN }}.
-# Raises rate limits for raw.githubusercontent.com significantly.
-# Falls back to empty string when running locally — unauthenticated still works,
-# just at the lower public rate limit.
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 
 # Multiple ASN blocklist sources
@@ -158,7 +154,6 @@ def parse_lines(content: str, fmt: str, default_type: str = "spam"):
         for row in reader:
             ip_str = (row.get("ip") or row.get("IP") or row.get("address") or "").strip()
             if not ip_str:
-                # Fallback if first column doesn't match keys
                 vals = list(row.values())
                 ip_str = vals[0].strip() if vals else ""
 
@@ -170,7 +165,6 @@ def parse_lines(content: str, fmt: str, default_type: str = "spam"):
             if not row_type or row_type not in ["proxy", "vpn", "tor", "datacenter", "mobile"]:
                 row_type = default_type
 
-            # Parse as single IP or CIDR range
             if "/" in ip_str:
                 res = cidr_to_range(ip_str)
             else:
@@ -226,7 +220,6 @@ def download_zip(url: str) -> str:
         raw_bytes = resp.read()
 
     with zipfile.ZipFile(io.BytesIO(raw_bytes)) as zf:
-        # StopForumSpam zip contains exactly one text file — grab the first entry
         first_name = zf.namelist()[0]
         with zf.open(first_name) as f:
             return f.read().decode("utf-8", errors="ignore")
@@ -276,7 +269,6 @@ def build_database():
     for source in SOURCES:
         log.info(f"  Processing source: {source['name']} …")
         try:
-            # StopForumSpam delivers a .zip — use the zip-aware downloader
             if source["format"] == "sfs_zip":
                 content = download_zip(source["url"])
             else:
@@ -314,11 +306,9 @@ def build_database():
             content = download(asn_source["url"])
             f_io = io.StringIO(content.strip())
             
-            # Peek at the first line to see if it looks like a header
             first_line = f_io.readline()
             f_io.seek(0)
             
-            # Check if common header keywords exist
             has_header = any(k in first_line.lower() for k in ["asn", "organization", "country", "org", "name"])
             source_count = 0
 
@@ -364,14 +354,12 @@ def build_database():
             failed.append(asn_source["name"])
 
     if all_asn_rows:
-        # INSERT OR REPLACE handles any overlapping ASNs between blocklists cleanly
         cur.executemany(
             "INSERT OR REPLACE INTO asn_blocklist (asn, org, type, country) VALUES (?, ?, ?, ?)",
             all_asn_rows,
         )
         conn.commit()
         
-        # Get count of unique stored ASNs
         cur.execute("SELECT COUNT(*) FROM asn_blocklist")
         asn_count = cur.fetchone()[0]
         log.info(f"    → {asn_count:>7,} total unique ASNs inserted")
@@ -400,7 +388,6 @@ def build_database():
         log.warning(f"  Failed sources: {', '.join(failed)}")
     log.info(f"  Output       : {DB_PATH}")
 
-    # Exit with error if ALL sources failed
     if len(failed) == len(SOURCES) + len(ASN_SOURCES):
         log.error("All sources failed — aborting.")
         sys.exit(1)
