@@ -129,7 +129,7 @@ def parse_lines(content: str, fmt: str, default_type: str = "spam"):
     if fmt == "sfs_zip":
         fmt = "ip"
 
-    # client9/ipcat format: ip_start,ip_end,name,url  (dot notation, no CIDR)
+    # client9/ipcat format: ip_start,ip_end,name,url  (dot notation, not CIDR)
     if fmt == "ipcat_csv":
         for raw_line in content.splitlines():
             line = raw_line.strip()
@@ -147,10 +147,18 @@ def parse_lines(content: str, fmt: str, default_type: str = "spam"):
                 continue
         return
 
-    # FFraud confirmed abusive CSV format: ip, type, etc.
+    # FFraud confirmed abusive CSV format: ip, ffraud_score, confirmations, category, type
     if fmt == "ffraud_csv":
-        f_io = io.StringIO(content.strip())
+        # Filter out comment lines starting with '#'
+        clean_lines = [
+            line for line in content.splitlines() 
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        clean_content = "\n".join(clean_lines)
+        
+        f_io = io.StringIO(clean_content)
         reader = csv.DictReader(f_io)
+        
         for row in reader:
             ip_str = (row.get("ip") or row.get("IP") or row.get("address") or "").strip()
             if not ip_str:
@@ -160,7 +168,7 @@ def parse_lines(content: str, fmt: str, default_type: str = "spam"):
             if not ip_str:
                 continue
 
-            # Check specified type or fallback to default_type ('spam')
+            # Check specified type under 'type' header; if blank, default to 'spam'
             row_type = (row.get("type") or row.get("category") or "").strip().lower()
             if not row_type or row_type not in ["proxy", "vpn", "tor", "datacenter", "mobile"]:
                 row_type = default_type
