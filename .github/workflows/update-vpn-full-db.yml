@@ -63,15 +63,7 @@ jobs:
           print("Verification passed ✓")
           EOF
 
-      # ── 5. Publish as a rolling 'vpn-latest' release ─────────────────────────
-      #
-      #  Strategy: delete + recreate the 'vpn-latest' tag/release on every run.
-      #  Using a dedicated tag prevents this workflow from wiping the
-      #  GeoLite2-ASN.mmdb asset managed by the ASN workflow.
-      #
-      #  Stable download URL (never changes):
-      #    https://github.com/YOUR_USERNAME/YOUR_REPO/releases/download/vpn-latest/vpn_detection.db
-      #
+      # ── 5. Publish as a rolling 'vpn-latest-full' release ────────────────────
       - name: Delete existing 'vpn-latest-full' release (if any)
         run: gh release delete vpn-latest-full --yes --cleanup-tag || true
         env:
@@ -80,7 +72,7 @@ jobs:
       - name: Create new 'vpn-latest-full' release
         run: |
           DATE=$(date -u '+%Y-%m-%d')
-          gh release create vpn-latest-full vpn_full_detection.db \
+          gh release create vpn-latest-full vpn_detection_full.db \
             --title "VPN Detection Full Database — ${DATE}" \
             --notes "$(cat <<'NOTES'
           ## Auto-updated daily at 02:00 UTC
@@ -91,9 +83,12 @@ jobs:
           | [Tor Project](https://check.torproject.org/torbulkexitlist) | Tor exit nodes |
           | [ipcat_datacenter](https://raw.githubusercontent.com/client9/ipcat/master/datacenters.csv) | Datacenter / hosting IPs |
           | [Stamparm ipsum level 3](https://github.com/stamparm/ipsum) | Open proxies |
+          | [StopForumSpam](https://www.stopforumspam.com) | Spammer IPs |
+          | [AbuseIPDB](https://github.com/borestad/blocklist-abuseipdb) | Abuse IPs |
+          | [FFraud confirmed abusive](https://github.com/FFraud-com/ip-fraud-database) | Confirmed threat IPs |
           ### Download
           ```
-          https://github.com/YOUR_USERNAME/YOUR_REPO/releases/download/vpn-latest-full/vpn_detection_full.db
+          [https://github.com/YOUR_USERNAME/YOUR_REPO/releases/download/vpn-latest-full/vpn_detection_full.db](https://github.com/YOUR_USERNAME/YOUR_REPO/releases/download/vpn-latest-full/vpn_detection_full.db)
           ```
           NOTES
           )" \
