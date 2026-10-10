@@ -1,19 +1,8 @@
 #!/usr/bin/env python3
 """
-VPN Detection Database Builder
+VPN Detection Database Builder (Full Edition)
 Downloads free IP blocklists and builds a single SQLite database
 for offline VPN / proxy detection in WordPress plugins.
-
-Sources used (all free, no API key required):
-  - X4BNet          : Commercial VPN provider IP ranges
-  - Tor Project     : Official Tor exit node list
-  - client9/ipcat   : Datacenter / hosting IP ranges (CSV)
-  - Stamparm        : Known open proxies (level 3 = high confidence)
-  - StopForumSpam   : Known forum/blog spammer IPs (30-day list, zipped)
-  - AbuseIPDB       : 100% confidence abuse score IPs, 30-day (borestad mirror, no key)
-  - brianhama       : Bad ASN list (ASN-level blocklist)
-  - FFraud-com      : High-abuse networks ASN list
-  - FFraud-com      : Confirmed abusive IP addresses
 """
 
 import ipaddress
@@ -34,12 +23,9 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-DB_PATH = "vpn_full_detection.db"
-
-# Read the built-in GitHub Actions token from environment.
+DB_PATH = "vpn_detection_full.db"
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 
-# Multiple ASN blocklist sources
 ASN_SOURCES = [
     {
         "name": "bad_asn_list",
@@ -68,7 +54,7 @@ SOURCES = [
         "name":   "ipcat_datacenter",
         "url":    "https://raw.githubusercontent.com/client9/ipcat/master/datacenters.csv",
         "type":   "datacenter",
-        "format": "ipcat_csv",   # ip_start,ip_end,name,url  (dot notation, not CIDR)
+        "format": "ipcat_csv",
     },
     {
         "name":   "ipsum_proxy",
@@ -80,27 +66,23 @@ SOURCES = [
         "name":   "stopforumspam",
         "url":    "https://www.stopforumspam.com/downloads/listed_ip_30.zip",
         "type":   "spam",
-        "format": "sfs_zip",   # ZIP containing a plain-text file of IPs, one per line
+        "format": "sfs_zip",
     },
     {
         "name":   "abuseipdb",
         "url":    "https://raw.githubusercontent.com/borestad/blocklist-abuseipdb/main/abuseipdb-s100-30d.ipv4",
         "type":   "abuse",
-        "format": "ip",        # plain text, one IP per line — no API key required
+        "format": "ip",
     },
     {
         "name":   "frraud abuse",
         "url":    "https://raw.githubusercontent.com/FFraud-com/ip-fraud-database/refs/heads/main/threat-ips/confirmed-abusive.csv",
-        "type":   "spam",      # default fallback if blank/missing type in CSV
-        "format": "ffraud_csv", # custom CSV with IP & dynamic type columns
+        "type":   "spam",
+        "format": "ffraud_csv",
     },
 ]
 
-
-# ── Parsing helpers ────────────────────────────────────────────────────────────
-
 def cidr_to_range(cidr: str):
-    """Convert a CIDR string to an (ip_start_int, ip_end_int) tuple, or None."""
     try:
         net = ipaddress.ip_network(cidr.strip(), strict=False)
         if net.version != 4:
@@ -109,9 +91,7 @@ def cidr_to_range(cidr: str):
     except ValueError:
         return None
 
-
 def ip_to_range(ip: str):
-    """Convert a single IPv4 string to an (ip_start_int, ip_end_int) tuple, or None."""
     try:
         addr = ipaddress.ip_address(ip.strip())
         if addr.version != 4:
@@ -121,15 +101,10 @@ def ip_to_range(ip: str):
     except ValueError:
         return None
 
-
 def parse_lines(content: str, fmt: str, default_type: str = "spam"):
-    """Yield (ip_start, ip_end, row_type) tuples from raw text content."""
-
-    # sfs_zip: already extracted to plain text by download_zip() — treat as plain IPs
     if fmt == "sfs_zip":
         fmt = "ip"
 
-    # client9/ipcat format: ip_start,ip_end,name,url  (dot notation, not CIDR)
     if fmt == "ipcat_csv":
         for raw_line in content.splitlines():
             line = raw_line.strip()
@@ -147,9 +122,7 @@ def parse_lines(content: str, fmt: str, default_type: str = "spam"):
                 continue
         return
 
-    # FFraud confirmed abusive CSV format: ip, ffraud_score, confirmations, category, type
     if fmt == "ffraud_csv":
-        # Filter out comment lines starting with '#'
         clean_lines = [
             line for line in content.splitlines() 
             if line.strip() and not line.strip().startswith("#")
@@ -168,7 +141,6 @@ def parse_lines(content: str, fmt: str, default_type: str = "spam"):
             if not ip_str:
                 continue
 
-            # Check specified type under 'type' header; if blank, default to 'spam'
             row_type = (row.get("type") or row.get("category") or "").strip().lower()
             if not row_type or row_type not in ["proxy", "vpn", "tor", "datacenter", "mobile"]:
                 row_type = default_type
@@ -184,12 +156,8 @@ def parse_lines(content: str, fmt: str, default_type: str = "spam"):
 
     for raw_line in content.splitlines():
         line = raw_line.strip()
-
-        # Skip blanks and comments
         if not line or line.startswith("#") or line.startswith(";") or line.startswith("//"):
             continue
-
-        # Strip inline comments
         line = line.split("#")[0].strip()
         if not line:
             continue
@@ -197,47 +165,35 @@ def parse_lines(content: str, fmt: str, default_type: str = "spam"):
         if "/" in line:
             result = cidr_to_range(line)
         elif fmt == "cidr":
-            result = ip_to_range(line)   # CIDR list with a bare IP (treat as /32)
+            result = ip_to_range(line)
         else:
             result = ip_to_range(line)
 
         if result:
             yield result[0], result[1], default_type
 
-
-# ── Download ───────────────────────────────────────────────────────────────────
-
 def _make_headers(url: str) -> dict:
-    """Build request headers, adding GitHub auth for raw.githubusercontent.com URLs."""
     headers = {"User-Agent": "vpn-detection-db-builder/1.0 (github.com)"}
     if "githubusercontent.com" in url and GITHUB_TOKEN:
         headers["Authorization"] = f"token {GITHUB_TOKEN}"
     return headers
-
 
 def download(url: str) -> str:
     req = urllib.request.Request(url, headers=_make_headers(url))
     with urllib.request.urlopen(req, timeout=30) as resp:
         return resp.read().decode("utf-8", errors="ignore")
 
-
 def download_zip(url: str) -> str:
-    """Download a .zip file and return the text content of the first file inside it."""
     req = urllib.request.Request(url, headers=_make_headers(url))
     with urllib.request.urlopen(req, timeout=60) as resp:
         raw_bytes = resp.read()
-
     with zipfile.ZipFile(io.BytesIO(raw_bytes)) as zf:
         first_name = zf.namelist()[0]
         with zf.open(first_name) as f:
             return f.read().decode("utf-8", errors="ignore")
 
-
-# ── Main build ─────────────────────────────────────────────────────────────────
-
 def build_database():
     log.info("Starting database build …")
-
     if os.path.exists(DB_PATH):
         os.remove(DB_PATH)
 
@@ -253,15 +209,14 @@ def build_database():
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
             ip_start   INTEGER NOT NULL,
             ip_end     INTEGER NOT NULL,
-            type       TEXT    NOT NULL,   -- 'vpn' | 'tor' | 'datacenter' | 'proxy' | 'spam' | 'abuse' | 'mobile'
-            source     TEXT    NOT NULL    -- source identifier
+            type       TEXT    NOT NULL,
+            source     TEXT    NOT NULL
         );
 
-        -- ASN-level blocklists
         CREATE TABLE asn_blocklist (
-            asn       TEXT PRIMARY KEY,   -- e.g. 'AS9009'
-            org       TEXT,               -- e.g. 'M247 Ltd'
-            type      TEXT,               -- 'vpn' | 'datacenter' | 'proxy' | 'bad'
+            asn       TEXT PRIMARY KEY,
+            org       TEXT,
+            type      TEXT,
             country   TEXT
         );
 
@@ -297,14 +252,12 @@ def build_database():
             log.error(f"    ✗ Failed: {exc}")
             failed.append(source["name"])
 
-    # Build indexes AFTER bulk insert — dramatically faster
     log.info("Building indexes …")
     cur.executescript("""
         CREATE INDEX idx_start ON ip_ranges (ip_start);
         CREATE INDEX idx_end   ON ip_ranges (ip_end);
     """)
 
-    # ── ASN blocklists ──────────────────────────────────────────────────────────
     asn_count = 0
     all_asn_rows = []
 
@@ -312,8 +265,13 @@ def build_database():
         log.info(f"Processing source: {asn_source['name']} …")
         try:
             content = download(asn_source["url"])
-            f_io = io.StringIO(content.strip())
+            clean_lines = [
+                line for line in content.splitlines() 
+                if line.strip() and not line.strip().startswith("#")
+            ]
+            clean_content = "\n".join(clean_lines)
             
+            f_io = io.StringIO(clean_content)
             first_line = f_io.readline()
             f_io.seek(0)
             
@@ -372,7 +330,6 @@ def build_database():
         asn_count = cur.fetchone()[0]
         log.info(f"    → {asn_count:>7,} total unique ASNs inserted")
 
-    # Metadata row
     built_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     cur.executemany("INSERT OR REPLACE INTO meta VALUES (?, ?)", [
         ("built_at",        built_at),
@@ -382,7 +339,6 @@ def build_database():
     ])
     conn.commit()
 
-    # Compact the file
     cur.execute("VACUUM")
     conn.close()
 
@@ -403,7 +359,6 @@ def build_database():
     if grand_total < 1000:
         log.error(f"Too few ranges ({grand_total}) — something is wrong.")
         sys.exit(1)
-
 
 if __name__ == "__main__":
     build_database()
