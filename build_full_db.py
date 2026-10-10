@@ -34,7 +34,7 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-DB_PATH = "vpn_detection_full.db"
+DB_PATH = "vpn_full_detection.db"
 
 # Read the built-in GitHub Actions token from environment.
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
