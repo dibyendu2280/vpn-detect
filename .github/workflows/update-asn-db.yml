@@ -25,23 +25,24 @@ jobs:
             "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-ASN&license_key=${{ secrets.MAXMIND_LICENSE_KEY }}&suffix=tar.gz" \
             -o GeoLite2-ASN.tar.gz
 
-      # ── 3. Extract the .mmdb from the tarball ────────────────────────────────
-      - name: Extract .mmdb
+      # ── 3. Extract the .mmdb from the tarball and rename it ─────────────────
+      - name: Extract and rename .mmdb
         run: |
           tar -xzf GeoLite2-ASN.tar.gz
-          # MaxMind wraps it in a versioned folder — find it wherever it is
+          # MaxMind wraps it in a versioned folder — find it wherever it is,
+          # then rename GeoLite2-ASN.mmdb -> Geolocation-ASN.mmdb
           find . -name "GeoLite2-ASN.mmdb" -not -path "./.git/*" \
-            -exec mv {} GeoLite2-ASN.mmdb \;
+            -exec mv {} Geolocation-ASN.mmdb \;
 
       # ── 4. Verify the file ───────────────────────────────────────────────────
       - name: Verify .mmdb file
         run: |
-          if [ ! -f "GeoLite2-ASN.mmdb" ]; then
-            echo "ERROR: GeoLite2-ASN.mmdb not found after extraction"
+          if [ ! -f "Geolocation-ASN.mmdb" ]; then
+            echo "ERROR: Geolocation-ASN.mmdb not found after extraction"
             exit 1
           fi
 
-          SIZE=$(stat -c%s "GeoLite2-ASN.mmdb")
+          SIZE=$(stat -c%s "Geolocation-ASN.mmdb")
           echo "File size: ${SIZE} bytes"
 
           # Must be at least 5 MB — a valid ASN DB is ~8 MB
@@ -51,29 +52,25 @@ jobs:
           fi
 
           # Valid MaxMind .mmdb starts with specific magic bytes
-          MAGIC=$(xxd -l 3 -p GeoLite2-ASN.mmdb)
+          MAGIC=$(xxd -l 3 -p Geolocation-ASN.mmdb)
           echo "Magic bytes: ${MAGIC}"
           echo "Verification passed ✓"
 
       # ── 5. Publish as a rolling 'latest' release ─────────────────────────────
       #
-      #  This reuses the SAME 'latest' release tag as the VPN DB workflow.
-      #  Both workflows upload to the same release — the two asset files
-      #  coexist peacefully under the one 'latest' tag.
-      #
-      #  Stable download URL (never changes):
-      #   https://github.com/YOUR_USERNAME/YOUR_REPO/releases/download/asn-latest/GeoLite2-ASN.mmdb
+      #  Stable download URL (asset renamed):
+      #   https://github.com/YOUR_USERNAME/YOUR_REPO/releases/download/asn-latest/Geolocation-ASN.mmdb
       #
       - name: Delete existing 'asn-latest' release (if any)
         run: gh release delete asn-latest --yes --cleanup-tag || true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      
+
       - name: Create new 'asn-latest' release
         run: |
           DATE=$(date -u '+%Y-%m-%d')
-          gh release create asn-latest GeoLite2-ASN.mmdb \
-            --title "GeoLite2-ASN Database — ${DATE}" \
+          gh release create asn-latest Geolocation-ASN.mmdb \
+            --title "Geolocation-ASN Database — ${DATE}" \
             --notes "Auto-updated every Tuesday at 03:00 UTC from MaxMind." \
             --latest=false
         env:
